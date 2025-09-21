@@ -1,7 +1,8 @@
 -- ESPMenu.client.lua
 -- CNR-ST: ESP (On/Off + Color), Fly (On/Off + Speed), Noclip (On/Off),
 --         Aimbot (Shift basiliyken direkt snap),
---         Unlock Cam (FPS), Insert=minimize, Home=mouse serbest
+--         Unlock Cam (FPS), Fullbright (On/Off), Godmode (On/Off),
+--         Insert=minimize, Home=mouse serbest
 
 --// Services
 local Players = game:GetService("Players")
@@ -9,6 +10,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
+local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -30,6 +32,8 @@ local STATE = {
     AimbotSmooth = 0,      -- direkt snap (0)
 
     UnlockCamEnabled = false, -- FPS oyunlarinda kamera kilidini ac
+    FullbrightEnabled = false,
+    GodmodeEnabled = false,
 }
 
 local function tween(o, props, t)
@@ -133,6 +137,10 @@ local function onCharAdded(plr, char)
         if STATE.UnlockCamEnabled and plr == LocalPlayer then
             task.wait(0.05)
             if _G.__CNRST_SetUnlockCam then _G.__CNRST_SetUnlockCam(true) end
+        end
+        if STATE.GodmodeEnabled and plr == LocalPlayer then
+            task.wait(0.05)
+            if _G.__CNRST_SetGodmode then _G.__CNRST_SetGodmode(true) end
         end
     end)
 end
@@ -267,7 +275,7 @@ _G.__CNRST_EnableNoclip = function()
 
     local ch = LocalPlayer.Character
     if ch then
-        ch.DescendantAdded:Connect(function(d)
+        chDescConn = ch.DescendantAdded:Connect(function(d)
             if STATE.NoclipEnabled and d:IsA("BasePart") then
                 savedCollide[d] = d.CanCollide
                 d.CanCollide = false
@@ -300,9 +308,9 @@ local function getCharacterHead(plr)
     if not plr or plr == LocalPlayer then return nil end
     local ch = plr.Character
     if not ch then return nil end
-    local hum = ch:FindFirstChildOfClass("Humanoid")
+    local hum2 = ch:FindFirstChildOfClass("Humanoid")
     local head = ch:FindFirstChild("Head")
-    if not hum or hum.Health <= 0 or not head then return nil end
+    if not hum2 or hum2.Health <= 0 or not head then return nil end
     return head
 end
 
@@ -417,15 +425,13 @@ _G.__CNRST_SetUnlockCam = function(on)
     if not plr then return end
 
     if on then
-        if not isFpsForced() then
-            -- FPS'e zorlamayan oyunda etkisiz; UI yine On kalir
-        end
         if SavedCam.Mode == nil then
             SavedCam.Mode          = plr.CameraMode
             SavedCam.MinZoom       = plr.CameraMinZoomDistance
             SavedCam.MaxZoom       = plr.CameraMaxZoomDistance
             SavedCam.MouseBehavior = UserInputService.MouseBehavior
         end
+        -- FPS’e zorlamiyorsa bile UI On kalir; fonksiyon serbestakiyi dener
         plr.CameraMode = Enum.CameraMode.Classic
         plr.CameraMinZoomDistance = 5
         plr.CameraMaxZoomDistance = 128
@@ -445,6 +451,86 @@ _G.__CNRST_SetUnlockCam = function(on)
 end
 
 ----------------------------------------------------------------
+-- Fullbright
+----------------------------------------------------------------
+local SavedLight = nil
+
+_G.__CNRST_SetFullbright = function(on)
+    if on then
+        if not SavedLight then
+            SavedLight = {
+                Brightness = Lighting.Brightness,
+                Ambient = Lighting.Ambient,
+                OutdoorAmbient = Lighting.OutdoorAmbient,
+                ColorShift_Top = Lighting.ColorShift_Top,
+                ColorShift_Bottom = Lighting.ColorShift_Bottom,
+                FogEnd = Lighting.FogEnd,
+                GlobalShadows = Lighting.GlobalShadows,
+                ClockTime = Lighting.ClockTime,
+                ExposureCompensation = Lighting.ExposureCompensation,
+            }
+        end
+        Lighting.Brightness = 3
+        Lighting.Ambient = Color3.fromRGB(255,255,255)
+        Lighting.OutdoorAmbient = Color3.fromRGB(255,255,255)
+        Lighting.ColorShift_Top = Color3.fromRGB(255,255,255)
+        Lighting.ColorShift_Bottom = Color3.fromRGB(255,255,255)
+        Lighting.FogEnd = 1e6
+        Lighting.GlobalShadows = false
+        Lighting.ClockTime = 14
+        Lighting.ExposureCompensation = 0.5
+    else
+        if SavedLight then
+            pcall(function()
+                Lighting.Brightness = SavedLight.Brightness
+                Lighting.Ambient = SavedLight.Ambient
+                Lighting.OutdoorAmbient = SavedLight.OutdoorAmbient
+                Lighting.ColorShift_Top = SavedLight.ColorShift_Top
+                Lighting.ColorShift_Bottom = SavedLight.ColorShift_Bottom
+                Lighting.FogEnd = SavedLight.FogEnd
+                Lighting.GlobalShadows = SavedLight.GlobalShadows
+                Lighting.ClockTime = SavedLight.ClockTime
+                Lighting.ExposureCompensation = SavedLight.ExposureCompensation
+            end)
+        end
+        SavedLight = nil
+    end
+end
+
+----------------------------------------------------------------
+-- Godmode (client-side heal/lock)
+----------------------------------------------------------------
+local godConn = nil
+_G.__CNRST_SetGodmode = function(on)
+    if on then
+        if godConn then godConn:Disconnect(); godConn = nil end
+        local h = hum()
+        if not h then return end
+        -- cok yuksek saglik degeri ve aninda iyilestirme
+        pcall(function()
+            h.BreakJointsOnDeath = false
+            h.MaxHealth = 1e9
+            h.Health = h.MaxHealth
+        end)
+        godConn = h.HealthChanged:Connect(function()
+            if STATE.GodmodeEnabled and h and h.Parent then
+                if h.Health < h.MaxHealth then
+                    h.MaxHealth = math.max(h.MaxHealth, 1e9)
+                    h.Health = h.MaxHealth
+                end
+                -- Knock/State’i resetlemek icin:
+                if h:GetState() == Enum.HumanoidStateType.Ragdoll then
+                    h:ChangeState(Enum.HumanoidStateType.Running)
+                end
+            end
+        end)
+    else
+        if godConn then godConn:Disconnect(); godConn = nil end
+        -- Orijinale zorla donmeyelim (oyun degistirmis olabilir). Oldugu gibi birak.
+    end
+end
+
+----------------------------------------------------------------
 -- UI: sabit sag-alt panel, scrollable icerik
 ----------------------------------------------------------------
 local screenGui = Instance.new("ScreenGui")
@@ -458,7 +544,7 @@ local POS_BR = UDim2.new(1, -20, 1, -20)
 
 local panel = Instance.new("Frame")
 panel.Name = "Panel"
-panel.Size = UDim2.fromOffset(360, 360)
+panel.Size = UDim2.fromOffset(360, 440) -- boyu biraz arttirdik (yeni satirlar icin)
 panel.AnchorPoint = Vector2.new(1,1)
 panel.Position = POS_BR
 panel.BackgroundColor3 = Color3.fromRGB(18,20,26)
@@ -840,7 +926,6 @@ fpsToggle.TextColor3 = Color3.fromRGB(255,255,255)
 fpsToggle.Text = "Off"
 fpsToggle.AutoButtonColor = false
 fpsToggle.Parent = fpsTop
--- CRITICAL FIX: UDim.new (dogrusu), eskiden UDim.New yazilinca runtime error yapiyordu
 Instance.new("UICorner", fpsToggle).CornerRadius = UDim.new(0,10)
 
 local function setFpsVis()
@@ -858,6 +943,66 @@ fpsToggle.MouseButton1Click:Connect(function()
     if _G.__CNRST_SetUnlockCam then _G.__CNRST_SetUnlockCam(STATE.UnlockCamEnabled) end
 end)
 
+-- Fullbright row
+local rowFB, fbTop, fbLabel = makeRow()
+fbLabel.Text = "Fullbright"
+local fbToggle = Instance.new("TextButton")
+fbToggle.Size = UDim2.fromOffset(90, 32)
+fbToggle.Position = UDim2.new(1, -100, 0.5, -16)
+fbToggle.BackgroundColor3 = Color3.fromRGB(90,90,100)
+fbToggle.Font = Enum.Font.GothamBold
+fbToggle.TextSize = 14
+fbToggle.TextColor3 = Color3.fromRGB(255,255,255)
+fbToggle.Text = "Off"
+fbToggle.AutoButtonColor = false
+fbToggle.Parent = fbTop
+Instance.new("UICorner", fbToggle).CornerRadius = UDim.new(0,10)
+
+local function setFbVis()
+    if STATE.FullbrightEnabled then
+        fbToggle.Text = "On"; tween(fbToggle, {BackgroundColor3=Color3.fromRGB(90,190,110)}, 0.12)
+    else
+        fbToggle.Text = "Off"; tween(fbToggle, {BackgroundColor3=Color3.fromRGB(90,90,100)}, 0.12)
+    end
+end
+setFbVis()
+
+fbToggle.MouseButton1Click:Connect(function()
+    STATE.FullbrightEnabled = not STATE.FullbrightEnabled
+    setFbVis()
+    if _G.__CNRST_SetFullbright then _G.__CNRST_SetFullbright(STATE.FullbrightEnabled) end
+end)
+
+-- Godmode row
+local rowGM, gmTop, gmLabel = makeRow()
+gmLabel.Text = "Godmode"
+local gmToggle = Instance.new("TextButton")
+gmToggle.Size = UDim2.fromOffset(90, 32)
+gmToggle.Position = UDim2.new(1, -100, 0.5, -16)
+gmToggle.BackgroundColor3 = Color3.fromRGB(90,90,100)
+gmToggle.Font = Enum.Font.GothamBold
+gmToggle.TextSize = 14
+gmToggle.TextColor3 = Color3.fromRGB(255,255,255)
+gmToggle.Text = "Off"
+gmToggle.AutoButtonColor = false
+gmToggle.Parent = gmTop
+Instance.new("UICorner", gmToggle).CornerRadius = UDim.new(0,10)
+
+local function setGmVis()
+    if STATE.GodmodeEnabled then
+        gmToggle.Text = "On"; tween(gmToggle, {BackgroundColor3=Color3.fromRGB(90,190,110)}, 0.12)
+    else
+        gmToggle.Text = "Off"; tween(gmToggle, {BackgroundColor3=Color3.fromRGB(90,90,100)}, 0.12)
+    end
+end
+setGmVis()
+
+gmToggle.MouseButton1Click:Connect(function()
+    STATE.GodmodeEnabled = not STATE.GodmodeEnabled
+    setGmVis()
+    if _G.__CNRST_SetGodmode then _G.__CNRST_SetGodmode(STATE.GodmodeEnabled) end
+end)
+
 -- Minimize + Insert/Home
 local isMin = false
 local function miniSize() return UDim2.fromOffset(220, 56) end
@@ -868,7 +1013,7 @@ local function toggleMinimize()
         content.Visible = false
         tween(panel, {Size = miniSize()}, 0.15)
     else
-        tween(panel, {Size = UDim2.fromOffset(360, 360)}, 0.15)
+        tween(panel, {Size = UDim2.fromOffset(360, 440)}, 0.15)
         task.delay(0.16, function() if panel.Parent then content.Visible = true end end)
     end
 end
