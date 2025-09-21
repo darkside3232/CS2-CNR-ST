@@ -1,7 +1,7 @@
 -- ESPMenu.client.lua
 -- CNR-ST: ESP (On/Off + Color), Fly (On/Off + Speed), Noclip (On/Off),
---         Aimbot (Shift basiliyken direkt snap),
---         Unlock Cam (FPS), Fullbright (On/Off), Godmode (On/Off),
+--         Aimbot (Shift basili iken direkt snap),
+--         Unlock Cam (FPS), Fullbright (On/Off), Godmode (On/Off), TP (oyuncu listesi),
 --         Insert=minimize, Home=mouse serbest
 
 --// Services
@@ -31,9 +31,11 @@ local STATE = {
     AimbotCheckLOS = true, -- duvar arkasi kontrol
     AimbotSmooth = 0,      -- direkt snap (0)
 
-    UnlockCamEnabled = false, -- FPS oyunlarinda kamera kilidini ac
+    UnlockCamEnabled = false,
     FullbrightEnabled = false,
     GodmodeEnabled = false,
+
+    TpTargetName = nil,    -- secilen hedef oyuncu adi
 }
 
 local function tween(o, props, t)
@@ -120,6 +122,13 @@ end
 local function hrp()
     local ch = LocalPlayer.Character
     return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHRPFromPlayer(p)
+    if not p then return nil end
+    local c = p.Character
+    if not c then return nil end
+    return c:FindFirstChild("HumanoidRootPart")
 end
 
 ----------------------------------------------------------------
@@ -409,17 +418,6 @@ end)
 ----------------------------------------------------------------
 local SavedCam = { Mode=nil, MinZoom=nil, MaxZoom=nil, MouseBehavior=nil }
 
-local function isFpsForced()
-    local plr = LocalPlayer
-    if not plr then return false end
-    if plr.CameraMode == Enum.CameraMode.LockFirstPerson then return true end
-    if math.abs(plr.CameraMaxZoomDistance - plr.CameraMinZoomDistance) < 0.01 and plr.CameraMaxZoomDistance <= 0.6 then
-        return true
-    end
-    if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then return true end
-    return false
-end
-
 _G.__CNRST_SetUnlockCam = function(on)
     local plr = LocalPlayer
     if not plr then return end
@@ -431,7 +429,6 @@ _G.__CNRST_SetUnlockCam = function(on)
             SavedCam.MaxZoom       = plr.CameraMaxZoomDistance
             SavedCam.MouseBehavior = UserInputService.MouseBehavior
         end
-        -- FPS’e zorlamiyorsa bile UI On kalir; fonksiyon serbestakiyi dener
         plr.CameraMode = Enum.CameraMode.Classic
         plr.CameraMinZoomDistance = 5
         plr.CameraMaxZoomDistance = 128
@@ -454,7 +451,6 @@ end
 -- Fullbright
 ----------------------------------------------------------------
 local SavedLight = nil
-
 _G.__CNRST_SetFullbright = function(on)
     if on then
         if not SavedLight then
@@ -506,7 +502,6 @@ _G.__CNRST_SetGodmode = function(on)
         if godConn then godConn:Disconnect(); godConn = nil end
         local h = hum()
         if not h then return end
-        -- cok yuksek saglik degeri ve aninda iyilestirme
         pcall(function()
             h.BreakJointsOnDeath = false
             h.MaxHealth = 1e9
@@ -518,7 +513,6 @@ _G.__CNRST_SetGodmode = function(on)
                     h.MaxHealth = math.max(h.MaxHealth, 1e9)
                     h.Health = h.MaxHealth
                 end
-                -- Knock/State’i resetlemek icin:
                 if h:GetState() == Enum.HumanoidStateType.Ragdoll then
                     h:ChangeState(Enum.HumanoidStateType.Running)
                 end
@@ -526,8 +520,30 @@ _G.__CNRST_SetGodmode = function(on)
         end)
     else
         if godConn then godConn:Disconnect(); godConn = nil end
-        -- Orijinale zorla donmeyelim (oyun degistirmis olabilir). Oldugu gibi birak.
     end
+end
+
+----------------------------------------------------------------
+-- TP (oyuncu listesi + teleport)
+----------------------------------------------------------------
+local function getPlayerByNameExact(name)
+    if not name then return nil end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name == name then return p end
+    end
+    return nil
+end
+
+local function teleportToSelected()
+    local target = getPlayerByNameExact(STATE.TpTargetName or "")
+    if not target then return end
+    local myRoot = hrp()
+    local tgtRoot = getHRPFromPlayer(target)
+    if not myRoot or not tgtRoot then return end
+    -- biraz yukari offset ile
+    local offset = Vector3.new(0, 4, 0)
+    local dest = tgtRoot.CFrame + offset
+    myRoot.CFrame = dest
 end
 
 ----------------------------------------------------------------
@@ -544,7 +560,7 @@ local POS_BR = UDim2.new(1, -20, 1, -20)
 
 local panel = Instance.new("Frame")
 panel.Name = "Panel"
-panel.Size = UDim2.fromOffset(360, 440) -- boyu biraz arttirdik (yeni satirlar icin)
+panel.Size = UDim2.fromOffset(360, 520) -- TP satiri icin biraz daha yuksek
 panel.AnchorPoint = Vector2.new(1,1)
 panel.Position = POS_BR
 panel.BackgroundColor3 = Color3.fromRGB(18,20,26)
@@ -710,7 +726,6 @@ for _, col in ipairs(colors) do
     end)
 end
 
--- Palette ac/kapa
 colorBtn.MouseButton1Click:Connect(function()
     local show = not palette.Visible
     palette.Visible = show
@@ -718,7 +733,6 @@ colorBtn.MouseButton1Click:Connect(function()
     recalcCanvas()
 end)
 
--- Paletin disina tiklayinca kapanir
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if palette.Visible and input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -743,7 +757,6 @@ local function setEspVis()
     end
 end
 setEspVis()
-
 espToggle.MouseButton1Click:Connect(function()
     STATE.EspEnabled = not STATE.EspEnabled
     setEspVis()
@@ -774,7 +787,6 @@ local function setFlyVis()
     end
 end
 setFlyVis()
-
 flyToggle.MouseButton1Click:Connect(function()
     STATE.FlyEnabled = not STATE.FlyEnabled
     setFlyVis()
@@ -875,7 +887,6 @@ local function setNoclipVis()
     end
 end
 setNoclipVis()
-
 noclipToggle.MouseButton1Click:Connect(function()
     STATE.NoclipEnabled = not STATE.NoclipEnabled
     setNoclipVis()
@@ -906,7 +917,6 @@ local function setAimVis()
     end
 end
 setAimVis()
-
 aimToggle.MouseButton1Click:Connect(function()
     STATE.AimbotEnabled = not STATE.AimbotEnabled
     setAimVis()
@@ -936,7 +946,6 @@ local function setFpsVis()
     end
 end
 setFpsVis()
-
 fpsToggle.MouseButton1Click:Connect(function()
     STATE.UnlockCamEnabled = not STATE.UnlockCamEnabled
     setFpsVis()
@@ -966,7 +975,6 @@ local function setFbVis()
     end
 end
 setFbVis()
-
 fbToggle.MouseButton1Click:Connect(function()
     STATE.FullbrightEnabled = not STATE.FullbrightEnabled
     setFbVis()
@@ -996,28 +1004,165 @@ local function setGmVis()
     end
 end
 setGmVis()
-
 gmToggle.MouseButton1Click:Connect(function()
     STATE.GodmodeEnabled = not STATE.GodmodeEnabled
     setGmVis()
     if _G.__CNRST_SetGodmode then _G.__CNRST_SetGodmode(STATE.GodmodeEnabled) end
 end)
 
+-- TP row
+local rowTP, tpTop, tpLabel, tpExtra = makeRow()
+tpLabel.Text = "TP"
+
+-- Sol tarafta acilir oyuncu listesi (ScrollingFrame, 140px yukseklik)
+local TP_LIST_H = 140
+local tpListFrame = Instance.new("Frame")
+tpListFrame.Size = UDim2.new(1, -20, 0, TP_LIST_H)
+tpListFrame.Position = UDim2.fromOffset(10, 0)
+tpListFrame.BackgroundColor3 = Color3.fromRGB(26,28,34)
+tpListFrame.Visible = true
+tpListFrame.Parent = tpExtra
+tpListFrame.ZIndex = 15
+Instance.new("UICorner", tpListFrame).CornerRadius = UDim.new(0,10)
+
+local tpScroll = Instance.new("ScrollingFrame")
+tpScroll.Name = "Players"
+tpScroll.BackgroundTransparency = 1
+tpScroll.Size = UDim2.new(1, -10, 1, -10)
+tpScroll.Position = UDim2.fromOffset(5, 5)
+tpScroll.ScrollBarThickness = 6
+tpScroll.CanvasSize = UDim2.fromOffset(0, 0)
+tpScroll.Parent = tpListFrame
+
+local tpVlist = Instance.new("UIListLayout", tpScroll)
+tpVlist.Padding = UDim.new(0, 6)
+tpVlist.SortOrder = Enum.SortOrder.LayoutOrder
+tpVlist.HorizontalAlignment = Enum.HorizontalAlignment.Left
+tpVlist.VerticalAlignment = Enum.VerticalAlignment.Top
+tpVlist:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    tpScroll.CanvasSize = UDim2.fromOffset(0, tpVlist.AbsoluteContentSize.Y + 4)
+end)
+
+-- Teleport butonu (sagda)
+local tpBtn = Instance.new("TextButton")
+tpBtn.Size = UDim2.fromOffset(90, 32)
+tpBtn.Position = UDim2.new(1, -100, 0.5, -16)
+tpBtn.BackgroundColor3 = Color3.fromRGB(90,90,100)
+tpBtn.Font = Enum.Font.GothamBold
+tpBtn.TextSize = 14
+tpBtn.TextColor3 = Color3.fromRGB(255,255,255)
+tpBtn.Text = "Teleport"
+tpBtn.AutoButtonColor = false
+tpBtn.Parent = tpTop
+Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0,10)
+
+-- Secim etiketini goster (sagda, butonun soluna)
+local tpSel = Instance.new("TextLabel")
+tpSel.BackgroundTransparency = 1
+tpSel.Size = UDim2.new(0, 120, 1, 0)
+tpSel.Position = UDim2.new(1, -230, 0, 0)
+tpSel.Font = Enum.Font.Gotham
+tpSel.TextSize = 14
+tpSel.TextXAlignment = Enum.TextXAlignment.Right
+tpSel.TextColor3 = Color3.fromRGB(220,220,220)
+tpSel.Text = "Target: -"
+tpSel.Parent = tpTop
+
+-- Oyuncu satiri olusturucu
+local function makePlayerItem(p)
+    local item = Instance.new("TextButton")
+    item.Size = UDim2.new(1, -10, 0, 28)
+    item.TextXAlignment = Enum.TextXAlignment.Left
+    item.BackgroundColor3 = Color3.fromRGB(45,48,60)
+    item.Text = "  " .. p.Name
+    item.TextSize = 14
+    item.Font = Enum.Font.Gotham
+    item.TextColor3 = Color3.fromRGB(230,230,230)
+    item.AutoButtonColor = false
+    item.Parent = tpScroll
+    Instance.new("UICorner", item).CornerRadius = UDim.new(0,8)
+
+    local function refreshSel()
+        if STATE.TpTargetName == p.Name then
+            item.BackgroundColor3 = Color3.fromRGB(90,190,110)
+            item.TextColor3 = Color3.fromRGB(20,20,20)
+        else
+            item.BackgroundColor3 = Color3.fromRGB(45,48,60)
+            item.TextColor3 = Color3.fromRGB(230,230,230)
+        end
+    end
+    refreshSel()
+
+    item.MouseButton1Click:Connect(function()
+        STATE.TpTargetName = p.Name
+        tpSel.Text = "Target: " .. p.Name
+        -- butun item renklerini guncelle
+        for _, child in ipairs(tpScroll:GetChildren()) do
+            if child:IsA("TextButton") then
+                child.BackgroundColor3 = Color3.fromRGB(45,48,60)
+                child.TextColor3 = Color3.fromRGB(230,230,230)
+            end
+        end
+        refreshSel()
+    end)
+
+    return item
+end
+
+-- Listeyi kur/guncelle
+local function rebuildTpList()
+    for _, child in ipairs(tpScroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+    local list = Players:GetPlayers()
+    table.sort(list, function(a,b) return a.Name:lower() < b.Name:lower() end)
+    for _, p in ipairs(list) do
+        if p ~= LocalPlayer then
+            makePlayerItem(p)
+        end
+    end
+    -- secim label
+    if STATE.TpTargetName then
+        local okPlr = getPlayerByNameExact(STATE.TpTargetName)
+        tpSel.Text = okPlr and ("Target: " .. okPlr.Name) or "Target: -"
+        if not okPlr then STATE.TpTargetName = nil end
+    else
+        tpSel.Text = "Target: -"
+    end
+end
+
+-- Oyuncu degisimlerine bagla
+Players.PlayerAdded:Connect(function() rebuildTpList() end)
+Players.PlayerRemoving:Connect(function(p)
+    if STATE.TpTargetName == (p and p.Name) then
+        STATE.TpTargetName = nil
+        tpSel.Text = "Target: -"
+    end
+    rebuildTpList()
+end)
+
+-- Ilk kurulum
+rebuildTpList()
+tpExtra.Size = UDim2.new(1, 0, 0, TP_LIST_H)
+
+-- TP buton click
+tpBtn.MouseButton1Click:Connect(function()
+    teleportToSelected()
+end)
+
 -- Minimize + Insert/Home
 local isMin = false
 local function miniSize() return UDim2.fromOffset(220, 56) end
-
 local function toggleMinimize()
     isMin = not isMin
     if isMin then
         content.Visible = false
         tween(panel, {Size = miniSize()}, 0.15)
     else
-        tween(panel, {Size = UDim2.fromOffset(360, 440)}, 0.15)
+        tween(panel, {Size = UDim2.fromOffset(360, 520)}, 0.15)
         task.delay(0.16, function() if panel.Parent then content.Visible = true end end)
     end
 end
-
 local function forceMouseFree()
     UserInputService.MouseBehavior = Enum.MouseBehavior.Default
     UserInputService.MouseIconEnabled = true
