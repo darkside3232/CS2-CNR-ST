@@ -1,6 +1,6 @@
 -- ESPMenu.client.lua
 -- CNR-ST: ESP (On/Off + Color), Fly (On/Off + Speed), Noclip (On/Off),
---         Aimbot (Left Shift basiliyken surekli takip, direkt snap),
+--         Aimbot (Shift basiliyken direkt snap),
 --         Unlock Cam (FPS), Insert=minimize, Home=mouse serbest
 
 --// Services
@@ -37,9 +37,24 @@ local function tween(o, props, t)
 end
 
 ----------------------------------------------------------------
--- ESP Highlights
+-- ESP: Robust Highlight Manager
 ----------------------------------------------------------------
-local HLS = {} -- [Player] = Highlight
+local espFolder do
+    local ok, core = pcall(function() return game:GetService("CoreGui") end)
+    if ok and core then
+        espFolder = core:FindFirstChild("CNRST_ESPF") or Instance.new("Folder")
+        espFolder.Name = "CNRST_ESPF"
+        espFolder.Parent = core
+    else
+        local pg = LocalPlayer:WaitForChild("PlayerGui")
+        espFolder = pg:FindFirstChild("CNRST_ESPF") or Instance.new("Folder")
+        espFolder.Name = "CNRST_ESPF"
+        espFolder.Parent = pg
+    end
+end
+
+-- [Player] -> Highlight
+local HLS = {}
 
 local function applyHL(hl)
     if not hl then return end
@@ -51,33 +66,42 @@ local function applyHL(hl)
     hl.OutlineTransparency = 0.1
 end
 
-local function ensureHL(plr, char)
-    if not plr or not char then return end
-    if plr == LocalPlayer then
-        if HLS[plr] then pcall(function() HLS[plr]:Destroy() end) end
+local function destroyHLFor(plr)
+    local old = HLS[plr]
+    if old then
         HLS[plr] = nil
+        pcall(function() old:Destroy() end)
+    end
+end
+
+local function ensureHL(plr, char)
+    if not plr or plr == LocalPlayer then
+        destroyHLFor(plr)
         return
     end
-    local cur = HLS[plr]
-    if cur and cur.Adornee == char and cur.Parent == char then
-        applyHL(cur); return
+    if not (char and char.Parent) then
+        return
     end
-    if cur then pcall(function() cur:Destroy() end) end
-    local hl = Instance.new("Highlight")
-    hl.Name = "ESP_Highlight"
+    local hl = HLS[plr]
+    if hl and hl.Parent == espFolder and hl.Adornee == char then
+        applyHL(hl)
+        return
+    end
+    if hl then pcall(function() hl:Destroy() end) end
+    hl = Instance.new("Highlight")
+    hl.Name = "ESP_" .. plr.Name
     hl.Adornee = char
-    hl.Parent = char
+    hl.Parent = espFolder
     applyHL(hl)
     HLS[plr] = hl
 end
 
 local function refreshAllHL()
     for _, p in ipairs(Players:GetPlayers()) do
-        local c = p.Character
-        if STATE.EspEnabled and c then ensureHL(p, c)
+        if STATE.EspEnabled then
+            ensureHL(p, p.Character)
         else
-            if HLS[p] then pcall(function() HLS[p]:Destroy() end) end
-            HLS[p] = nil
+            destroyHLFor(p)
         end
     end
 end
@@ -99,7 +123,10 @@ end
 ----------------------------------------------------------------
 local function onCharAdded(plr, char)
     task.spawn(function()
-        char:WaitForChild("HumanoidRootPart", 5)
+        local deadline = time() + 5
+        while time() < deadline and (not char.Parent) do
+            RunService.Heartbeat:Wait()
+        end
         if STATE.EspEnabled then ensureHL(plr, char) end
         if STATE.FlyEnabled and plr == LocalPlayer then task.wait(0.1); _G.__CNRST_StartFly() end
         if STATE.NoclipEnabled and plr == LocalPlayer then task.wait(0.1); _G.__CNRST_EnableNoclip() end
@@ -110,16 +137,21 @@ local function onCharAdded(plr, char)
     end)
 end
 
+local function onCharRemoving(plr, _char)
+    destroyHLFor(plr)
+end
+
 for _, p in ipairs(Players:GetPlayers()) do
     p.CharacterAdded:Connect(function(c) onCharAdded(p, c) end)
+    p.CharacterRemoving:Connect(function(c) onCharRemoving(p, c) end)
     if p.Character then onCharAdded(p, p.Character) end
 end
 Players.PlayerAdded:Connect(function(p)
     p.CharacterAdded:Connect(function(c) onCharAdded(p, c) end)
+    p.CharacterRemoving:Connect(function(c) onCharRemoving(p, c) end)
 end)
 Players.PlayerRemoving:Connect(function(p)
-    if HLS[p] then pcall(function() HLS[p]:Destroy() end) end
-    HLS[p] = nil
+    destroyHLFor(p)
 end)
 
 RunService.Heartbeat:Connect(function()
@@ -127,10 +159,14 @@ RunService.Heartbeat:Connect(function()
     for _, p in ipairs(Players:GetPlayers()) do
         local c = p.Character
         local hl = HLS[p]
-        if c and (not hl or hl.Adornee ~= c or hl.Parent ~= c) then
-            ensureHL(p, c)
-        elseif hl then
-            applyHL(hl)
+        if not c then
+            if hl then destroyHLFor(p) end
+        else
+            if (not hl) or hl.Adornee ~= c or hl.Parent ~= espFolder then
+                ensureHL(p, c)
+            else
+                applyHL(hl)
+            end
         end
     end
 end)
@@ -231,7 +267,7 @@ _G.__CNRST_EnableNoclip = function()
 
     local ch = LocalPlayer.Character
     if ch then
-        chDescConn = ch.DescendantAdded:Connect(function(d)
+        ch.DescendantAdded:Connect(function(d)
             if STATE.NoclipEnabled and d:IsA("BasePart") then
                 savedCollide[d] = d.CanCollide
                 d.CanCollide = false
@@ -258,7 +294,7 @@ _G.__CNRST_DisableNoclip = function()
 end
 
 ----------------------------------------------------------------
--- Aimbot (enhanced, snap)
+-- Aimbot (snap)
 ----------------------------------------------------------------
 local function getCharacterHead(plr)
     if not plr or plr == LocalPlayer then return nil end
@@ -292,7 +328,7 @@ local function isOnScreen(pos3)
     return onScreen, Vector2.new(v.X, v.Y)
 end
 
-local currentTarget -- sticky target
+local currentTarget
 
 local function scoreTarget(head)
     local cam = workspace.CurrentCamera
@@ -346,9 +382,7 @@ RunService.RenderStepped:Connect(function()
 
     if currentTarget and currentTarget.Parent then
         local sc = scoreTarget(currentTarget)
-        if sc == math.huge then
-            currentTarget = nil
-        end
+        if sc == math.huge then currentTarget = nil end
     else
         currentTarget = nil
     end
@@ -358,7 +392,7 @@ RunService.RenderStepped:Connect(function()
     end
 
     if currentTarget then
-        aimSnap(currentTarget.Position) -- direkt snap
+        aimSnap(currentTarget.Position)
     end
 end)
 
@@ -384,7 +418,7 @@ _G.__CNRST_SetUnlockCam = function(on)
 
     if on then
         if not isFpsForced() then
-            return
+            -- FPS'e zorlamayan oyunda etkisiz; UI yine On kalir
         end
         if SavedCam.Mode == nil then
             SavedCam.Mode          = plr.CameraMode
@@ -473,7 +507,6 @@ content.CanvasSize = UDim2.fromOffset(0, 0)
 content.ZIndex = 10
 content.Parent = panel
 
--- Layout
 local vlist = Instance.new("UIListLayout", content)
 vlist.Padding = UDim.new(0, 10)
 vlist.SortOrder = Enum.SortOrder.LayoutOrder
@@ -591,7 +624,7 @@ for _, col in ipairs(colors) do
     end)
 end
 
--- PALETTE AÇ/KAPA: color butonuna tıklayınca açılır
+-- Palette ac/kapa
 colorBtn.MouseButton1Click:Connect(function()
     local show = not palette.Visible
     palette.Visible = show
@@ -599,7 +632,7 @@ colorBtn.MouseButton1Click:Connect(function()
     recalcCanvas()
 end)
 
--- Paletin dışına tıklayınca kapanır
+-- Paletin disina tiklayinca kapanir
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if palette.Visible and input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -807,6 +840,7 @@ fpsToggle.TextColor3 = Color3.fromRGB(255,255,255)
 fpsToggle.Text = "Off"
 fpsToggle.AutoButtonColor = false
 fpsToggle.Parent = fpsTop
+-- CRITICAL FIX: UDim.new (dogrusu), eskiden UDim.New yazilinca runtime error yapiyordu
 Instance.new("UICorner", fpsToggle).CornerRadius = UDim.new(0,10)
 
 local function setFpsVis()
